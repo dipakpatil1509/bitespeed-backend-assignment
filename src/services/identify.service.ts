@@ -34,7 +34,6 @@ const identify = async (identifyBody: identifyBody): Promise<APIResponse> => {
 		},
 	});
 	let contacts: Contact[] = [];
-	console.log("++++++++++++++++++++++-----------------------+", contact_matched);
 	if (contact_matched) {
 		if (contact_matched.linkPrecedence === "primary") {
 			contacts = await prisma.contact.findMany({
@@ -43,12 +42,14 @@ const identify = async (identifyBody: identifyBody): Promise<APIResponse> => {
 				},
 			});
 		} else {
-			console.log("+++++++++++++++++++++++", contact_matched);
 			contacts = await prisma.contact.findMany({
 				where: {
 					OR: [
 						{
-							id: contact_matched.linkedId || -1,
+							id: {
+								equals: contact_matched.linkedId || -1,
+								not: contact_matched.id,
+							},
 						},
 						{
 							linkedId: contact_matched.linkedId,
@@ -57,16 +58,96 @@ const identify = async (identifyBody: identifyBody): Promise<APIResponse> => {
 				},
 			});
 		}
+		contacts = [contact_matched, ...contacts];
+
+		const isEmailExist = contacts.some((a) => a.email === identifyBody.email);
+		const isPhoneExist = contacts.some((a) => a.phoneNumber === identifyBody.phoneNumber);
+
+		if (identifyBody.email && identifyBody.phoneNumber && !(isEmailExist && isPhoneExist)) {
+			const alreadyExistInContacts = await prisma.contact.findMany({
+				where: {
+					OR: [
+						{
+							email: identifyBody.email,
+						},
+						{
+							phoneNumber: identifyBody.phoneNumber || "",
+						},
+					],
+				},
+				orderBy: [
+					{
+						linkPrecedence: "asc",
+					},
+					{
+						createdAt: "asc",
+					},
+				],
+			});
+
+			if (alreadyExistInContacts.length > 0) {
+				let [primary, ...secondary] = alreadyExistInContacts;
+				if (primary.linkPrecedence !== "primary" && primary.linkedId) {
+					const primary_parent = await prisma.contact.findFirst({
+						where: {
+							id: primary.linkedId,
+						},
+					});
+					if (primary_parent) {
+						secondary.push(primary);
+						primary = primary_parent;
+					}
+				}
+				await prisma.contact.updateMany({
+					where: {
+						id: {
+							in: secondary.map((a) => a.id),
+						},
+					},
+					data: {
+						linkedId: primary.id,
+						linkPrecedence: "secondary",
+					},
+				});
+				secondary = secondary.map((a) => {
+					a.linkedId = primary.id;
+					a.linkPrecedence = "secondary";
+					return a;
+				});
+				contacts.push(primary);
+				contacts = contacts.concat(secondary);
+			} else {
+				const contact_created = await prisma.contact.create({
+					data: {
+						email: identifyBody.email,
+						phoneNumber: identifyBody.phoneNumber,
+						linkedId:
+							contact_matched.linkPrecedence === "primary"
+								? contact_matched.id
+								: contact_matched.linkedId,
+						linkPrecedence: "secondary",
+					},
+				});
+				contacts.push(contact_created);
+			}
+		}
 	} else {
 		//Create new primary Contact
+		const contact_created = await prisma.contact.create({
+			data: {
+				email: identifyBody.email,
+				phoneNumber: identifyBody.phoneNumber,
+				linkPrecedence: "primary",
+			},
+		});
+		contacts = [contact_created];
 	}
 
-	console.log(contacts);
-	if (contact_matched) {
-		contacts = [contact_matched, ...contacts];
-	}
-
-	contacts.sort((a: Contact, b: Contact) => a.createdAt.getTime() - b.createdAt.getTime());
+	contacts.sort(
+		(a: Contact, b: Contact) =>
+			a.linkPrecedence.localeCompare(b.linkPrecedence) &&
+			a.createdAt.getTime() - b.createdAt.getTime()
+	);
 
 	const data: identifyResponse = {
 		contact: {
@@ -76,21 +157,25 @@ const identify = async (identifyBody: identifyBody): Promise<APIResponse> => {
 			secondaryContactIds: [], // Array of all Contact IDs that are "secondary" to the primary contact
 		},
 	};
-	data.contact.primaryContatctId = contacts[0]?.id;
-	contacts.map((contact, id) => {
+	const emailSet = new Set<string>();
+	const phoneNumberSet = new Set<string>();
+	const secondaryContactIdSet = new Set<number>();
+	contacts.map((contact) => {
 		if (contact.email) {
-			data.contact.emails.push(contact.email);
+			emailSet.add(contact.email);
 		}
 		if (contact.phoneNumber) {
-			data.contact.phoneNumbers.push(contact.phoneNumber);
+			phoneNumberSet.add(contact.phoneNumber);
 		}
-		if (id !== 0) {
-			data.contact.secondaryContactIds.push(contact.id);
+		if (contact.linkPrecedence === "secondary") {
+			secondaryContactIdSet.add(contact.id);
+		} else {
+			data.contact.primaryContatctId = contact.id;
 		}
 	});
-	data.contact.phoneNumbers = Array.from(new Set(data.contact.phoneNumbers));
-	data.contact.emails = Array.from(new Set(data.contact.emails));
-	data.contact.secondaryContactIds = Array.from(new Set(data.contact.secondaryContactIds));
+	data.contact.emails = Array.from(emailSet);
+	data.contact.phoneNumbers = Array.from(phoneNumberSet);
+	data.contact.secondaryContactIds = Array.from(secondaryContactIdSet);
 
 	return sendResponse({
 		data: data,
