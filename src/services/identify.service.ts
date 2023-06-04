@@ -22,12 +22,12 @@ const identify = async (identifyBody: identifyBody): Promise<APIResponse> => {
 	}
 	identifyBody.phoneNumber = identifyBody.phoneNumber + "";
 	const or_condition_contact_matched: any[] = [];
-	if (!identifyBody.email) {
+	if (identifyBody.email) {
 		or_condition_contact_matched.push({
 			email: identifyBody.email,
 		});
 	}
-	if (!identifyBody.phoneNumber) {
+	if (identifyBody.phoneNumber) {
 		or_condition_contact_matched.push({
 			phoneNumber: identifyBody.phoneNumber || "",
 		});
@@ -37,6 +37,7 @@ const identify = async (identifyBody: identifyBody): Promise<APIResponse> => {
 			OR: or_condition_contact_matched,
 		},
 	});
+	console.log(or_condition_contact_matched, contact_matched)
 	let contacts: Contact[] = [];
 	if (contact_matched) {
 		let primary_id = -1;
