@@ -1,35 +1,41 @@
 import express, { NextFunction, Request, Response } from "express";
-import dotenv from 'dotenv';
+import dotenv from "dotenv";
+import identifyRouter from "./src/routes/identify.routes";
+import { sendResponse } from "./src/utils/helper";
 
 dotenv.config();
-
-const bodyParser = require("body-parser");
 
 const app = express();
 const port = 3000;
 
-app.use(bodyParser.json());
+// support parsing of application/json type post data
+app.use(express.json());
+
+//support parsing of application/x-www-form-urlencoded post data
 app.use(
-  bodyParser.urlencoded({
-    extended: true,
-  })
+	express.urlencoded({
+		extended: true,
+	})
 );
 
-app.get("/", (req, res) => {
-  res.json({ message: "ok" });
-});
-
-// app.use("/programming-languages", programmingLanguagesRouter);
+app.use("/identify", identifyRouter);
 
 /* Error handler middleware */
-app.use((err:any, req:Request, res:Response, next:NextFunction) => {
-  const statusCode = err.statusCode || 500;
-  console.error(err.message, err.stack);
-  res.status(statusCode).json({ message: err.message });
+app.use((err: any, req: Request, res: Response, next: NextFunction) => {
+	const statusCode = err.statusCode || 500;
+	res.status(statusCode).json(
+		sendResponse({
+			success: false,
+			message: err.message,
+			data: {},
+			errorObject: err,
+			customCode: 0,
+		})
+	);
 
-  return;
+	return;
 });
 
 app.listen(port, "0.0.0.0", () => {
-  console.log(`Example app listening at http://localhost:${port}`);
+	console.log(`Example app listening at http://localhost:${port}`);
 });
